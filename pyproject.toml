@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.11"
 pillow = "^10.3.0"
 pillow-avif-plugin = "^1.4.3"
 streamlit = "^1.35.0"
