@@ -1,29 +1,19 @@
-[project]
+[tool.poetry]
 name = "epub-compressor"
 version = "0.1.0"
 description = "Compress epub by converting images to webp"
-authors = [
-    { name = "icealtria", email = "icealtria@gmail.com" }
-]
-dependencies = [
-    "pillow>=10.3.0",
-    "pillow-avif-plugin>=1.4.3",
-    "streamlit>=1.35.0",
-    "python-magic-bin>=0.4.14",
-]
+authors = ["icealtria <icealtria@gmail.com>"]
+license = "MIT"
 readme = "README.md"
-requires-python = ">= 3.12"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pillow = "^10.3.0"
+pillow-avif-plugin = "^1.4.3"
+streamlit = "^1.35.0"
+python-magic-bin = "^0.4.14"
+
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.rye]
-managed = true
-dev-dependencies = []
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/epub_compressor"]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
