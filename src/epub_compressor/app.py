@@ -1,4 +1,5 @@
-from typing import Literal
+import logging
+from typing import Literal, Tuple
 import streamlit as st
 from PIL import Image
 import io
@@ -8,16 +9,23 @@ import zipfile
 import magic
 
 
-def convert_image(image, quality: int, format: Literal["WEBP", "AVIF"]) -> bytes:
-    image = Image.open(io.BytesIO(image))
-    output_io = io.BytesIO()
-    image.save(output_io, format=format, quality=quality)
-    return output_io.getvalue()
+def convert_image(image: bytes, quality: int, format: Literal["WEBP", "AVIF"]) -> bytes:
+    try:
+        img = Image.open(io.BytesIO(image))
+        output_io = io.BytesIO()
+        img.save(output_io, format=format, quality=quality)
+        return output_io.getvalue()
+    except Exception as e:
+        logging.error(f"Error converting image: {e}")
+        return image
 
 
-def process_file(item, book, quality, format):
+def process_file(
+    item: zipfile.ZipInfo, book: zipfile.ZipFile, quality: int, format: str
+) -> Tuple[zipfile.ZipInfo, bytes]:
     file_content = book.read(item.filename)
-    if magic.from_buffer(file_content, mime=True).startswith("image/"):
+    mime_type = magic.from_buffer(file_content, mime=True)
+    if mime_type.startswith("image") and "cover" not in item.filename.lower():
         return item, convert_image(file_content, quality, format)
     else:
         return item, file_content
