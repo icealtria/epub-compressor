@@ -1,0 +1,258 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap");
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+    background-color: #ffe500;
+    font-family: "Space Mono", monospace;
+}
+
+.container {
+    max-width: 800px;
+    min-height: 100vh;
+    margin: 0 auto;
+    padding: 20px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.content-wrapper {
+    width: 100%;
+    max-width: 600px;
+    background-color: #fff;
+    border: 5px solid #000;
+    padding: 30px;
+    box-shadow: 10px 10px 0 #000;
+}
+
+.dragging .content-wrapper {
+    background-color: #f0f0f0;
+    transform: scale(1.02);
+}
+
+.title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin: 0 0 30px 0;
+    color: #000;
+    text-align: center;
+    letter-spacing: -1px;
+    text-shadow: 3px 3px 0 #ff77f0;
+}
+
+.hidden-input {
+    position: absolute;
+    width: 0.1px;
+    height: 0.1px;
+    opacity: 0;
+    overflow: hidden;
+    z-index: -1;
+}
+
+.drop-zone {
+    border: 5px dashed #000;
+    border-radius: 0;
+    padding: 40px 20px;
+    margin-bottom: 20px;
+    text-align: center;
+    background-color: #f0f0f0;
+    transition: all 0.3s;
+    cursor: pointer;
+    display: block;
+    position: relative;
+}
+
+.drop-zone:hover {
+    background-color: #e6e6e6;
+    transform: scale(1.02);
+}
+
+.drop-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+}
+
+.drop-zone p {
+    font-size: 1rem;
+    font-weight: bold;
+    margin: 0;
+}
+
+.filename {
+    font-weight: bold;
+    word-break: break-all;
+}
+
+input[type="file"] {
+    border: 3px solid #000;
+    padding: 10px;
+    width: 100%;
+    margin-bottom: 20px;
+    background-color: #f0f0f0;
+}
+
+.controls {
+    margin-bottom: 20px;
+}
+
+.controls label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+input[type="range"] {
+    width: 100%;
+    height: 10px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #f0f0f0;
+    border: 3px solid #000;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 25px;
+    height: 25px;
+    background: #ff77f0;
+    border: 3px solid #000;
+    cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #ff77f0;
+    border: 3px solid #000;
+    cursor: pointer;
+    border-radius: 0%;
+}
+
+.format-info {
+    background-color: #e2f7ff;
+    border: 3px solid #000;
+    padding: 10px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.format-info p {
+    margin: 0;
+    font-weight: bold;
+}
+
+.buttons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+button {
+    flex: 1;
+    padding: 15px;
+    border: 3px solid #000;
+    background-color: #00d1ff;
+    font-family: "Space Mono", monospace;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    box-shadow: 5px 5px 0 #000;
+}
+
+button:hover:not(:disabled) {
+    transform: translate(-2px, -2px);
+    box-shadow: 7px 7px 0 #000;
+}
+
+button:active:not(:disabled) {
+    transform: translate(0, 0);
+    box-shadow: 0 0 0 #000;
+}
+
+button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.compress-btn {
+    background-color: #00d1ff;
+}
+
+.download-btn {
+    background-color: #4cff42;
+}
+
+.file-size-comparison {
+    margin-top: 30px;
+    padding: 20px;
+    border: 3px solid #000;
+    background-color: #f8f8f8;
+}
+
+.comparison-title {
+    text-align: center;
+    margin: 0 0 20px 0;
+    font-size: 1.3rem;
+    font-weight: bold;
+    text-decoration: underline;
+}
+
+.size-details {
+    margin-bottom: 20px;
+}
+
+.size-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: #fff;
+    border: 3px solid #000;
+}
+
+.size-item.highlight {
+    background-color: #baffb4;
+    font-weight: bold;
+}
+
+.progress-container {
+    margin-top: 15px;
+}
+
+.progress-bar {
+    height: 25px;
+    background-color: #fff;
+    border: 3px solid #000;
+    overflow: hidden;
+}
+
+.progress {
+    height: 100%;
+    background-color: #ff77f0;
+    transition: width 0.5s ease-in-out;
+}
+
+.progress-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 5px;
+    font-size: 0.8rem;
+}
+
+.error {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #ff7070;
+    border: 3px solid #000;
+    color: #000;
+    font-weight: bold;
+    text-align: center;
+}
