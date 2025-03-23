@@ -1,23 +1,22 @@
 <script lang="ts">
     import { compressEpub } from "$lib";
     import { onMount } from "svelte";
-    import './styles.css';
+    import "./styles.css";
 
-    let epubFile: File | null = null;
+    let epubFiles: File[] = [];
+    let compressedBlobs: (Blob | null)[] = [];
+    let originalSizes: number[] = [];
+    let compressedSizes: number[] = [];
+    let compressionRatios: number[] = [];
+    let sizeDifferences: number[] = [];
+    let processingStates: boolean[] = [];
+    let errorMessages: string[] = [];
     let quality: number = 75;
     let imageFormat: "image/webp" | "image/jpeg" = "image/webp";
     let supportsWebP = false;
 
     let isProcessing = false;
-    let compressedBlob: Blob | null = null;
-    let errorMessage = "";
     let isDragging = false;
-
-    // File size tracking
-    let originalSize: number = 0;
-    let compressedSize: number = 0;
-    let compressionRatio: number = 0;
-    let sizeDifference: number = 0;
 
     function checkWebPSupport(): boolean {
         const canvas = document.createElement("canvas");
@@ -57,7 +56,7 @@
         // Check file extension
         const fileExtension = file.name.split(".").pop()?.toLowerCase();
         if (fileExtension !== "epub") {
-            errorMessage = "Only EPUB files are supported.";
+            errorMessages.push("Only EPUB files are supported.");
             return false;
         }
 
@@ -67,7 +66,9 @@
             "application/octet-stream",
         ];
         if (!validMimeTypes.includes(file.type) && file.type !== "") {
-            errorMessage = `Invalid file type: ${file.type}. Only EPUB files are supported.`;
+            errorMessages.push(
+                `Invalid file type: ${file.type}. Only EPUB files are supported.`,
+            );
             return false;
         }
 
@@ -77,17 +78,21 @@
     function handleFileSelected(event: Event) {
         const input = event.target as HTMLInputElement;
         if (input.files && input.files.length > 0) {
-            const file = input.files[0];
-            if (validateEpubFile(file)) {
-                epubFile = file;
-                originalSize = file.size;
-                compressedBlob = null;
-                compressedSize = 0;
-                compressionRatio = 0;
-                sizeDifference = 0;
-                errorMessage = "";
-            }
+            const files = Array.from(input.files);
+            const validFiles = files.filter(validateEpubFile);
+            addFiles(validFiles);
         }
+    }
+
+    function addFiles(files: File[]) {
+        epubFiles = [...epubFiles, ...files];
+        originalSizes = [...originalSizes, ...files.map((f) => f.size)];
+        compressedBlobs = [...compressedBlobs, ...files.map(() => null)];
+        compressedSizes = [...compressedSizes, ...files.map(() => 0)];
+        compressionRatios = [...compressionRatios, ...files.map(() => 0)];
+        sizeDifferences = [...sizeDifferences, ...files.map(() => 0)];
+        processingStates = [...processingStates, ...files.map(() => false)];
+        errorMessages = [...errorMessages, ...files.map(() => "")];
     }
 
     function handleDocumentDragOver(event: DragEvent) {
@@ -110,73 +115,78 @@
         event.preventDefault();
         isDragging = false;
         if (event.dataTransfer?.files?.length) {
-            const file = event.dataTransfer.files[0];
-            if (validateEpubFile(file)) {
-                epubFile = file;
-                originalSize = file.size;
-                compressedBlob = null;
-                compressedSize = 0;
-                compressionRatio = 0;
-                sizeDifference = 0;
-                errorMessage = "";
-            }
-        }
-    }
-
-    function handleDrop(event: DragEvent) {
-        event.preventDefault();
-        if (event.dataTransfer?.files?.length) {
-            const file = event.dataTransfer.files[0];
-            if (validateEpubFile(file)) {
-                epubFile = file;
-                originalSize = file.size;
-                compressedBlob = null;
-                compressedSize = 0;
-                compressionRatio = 0;
-                sizeDifference = 0;
-                errorMessage = "";
-            }
+            const files = Array.from(event.dataTransfer.files);
+            const validFiles = files.filter(validateEpubFile);
+            addFiles(validFiles);
         }
     }
 
     async function handleCompress() {
-        if (!epubFile) {
-            errorMessage = "No EPUB file selected.";
+        if (epubFiles.length === 0) {
+            errorMessages.push("No EPUB files selected.");
             return;
         }
 
         isProcessing = true;
-        errorMessage = "";
-        try {
-            // Pass imageFormat along with quality if your compressEpub supports it.
-            compressedBlob = await compressEpub(epubFile, quality, imageFormat);
 
-            // Calculate compression statistics
-            if (compressedBlob) {
-                compressedSize = compressedBlob.size;
-                sizeDifference = originalSize - compressedSize;
-                compressionRatio = Math.round(
-                    (1 - sizeDifference / originalSize) * 100,
-                );
-            }
-        } catch (err) {
-            errorMessage = "Compression failed. Check console for details.";
-            console.error(err);
-            compressedBlob = null;
+        try {
+            await Promise.all(
+                epubFiles.map(async (file, index) => {
+                    processingStates[index] = true;
+                    try {
+                        const compressed = await compressEpub(
+                            file,
+                            quality,
+                            imageFormat,
+                        );
+                        compressedBlobs[index] = compressed;
+                        compressedSizes[index] = compressed.size;
+                        sizeDifferences[index] =
+                            originalSizes[index] - compressed.size;
+                        compressionRatios[index] = Math.round(
+                            (1 -
+                                sizeDifferences[index] / originalSizes[index]) *
+                                100,
+                        );
+                        errorMessages[index] = "";
+                    } catch (err) {
+                        errorMessages[index] = "Compression failed";
+                        console.error(`Error compressing ${file.name}:`, err);
+                    } finally {
+                        processingStates[index] = false;
+                    }
+                }),
+            );
         } finally {
             isProcessing = false;
         }
     }
 
     function handleDownload() {
-        if (!compressedBlob || !epubFile) return;
-        const url = URL.createObjectURL(compressedBlob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download =
-            epubFile.name.replace(/\.epub$/i, "") + "-compressed.epub";
-        link.click();
-        URL.revokeObjectURL(url);
+        epubFiles.forEach((file, index) => {
+            const blob = compressedBlobs[index];
+            if (!blob) return;
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download =
+                file.name.replace(/\.epub$/i, "") + "-compressed.epub";
+            link.click();
+            URL.revokeObjectURL(url);
+        });
+    }
+
+    function removeFile(index: number, event: MouseEvent) {
+        event.stopPropagation(); // 阻止事件冒泡
+        epubFiles = epubFiles.filter((_, i) => i !== index);
+        originalSizes = originalSizes.filter((_, i) => i !== index);
+        compressedBlobs = compressedBlobs.filter((_, i) => i !== index);
+        compressedSizes = compressedSizes.filter((_, i) => i !== index);
+        compressionRatios = compressionRatios.filter((_, i) => i !== index);
+        sizeDifferences = sizeDifferences.filter((_, i) => i !== index);
+        processingStates = processingStates.filter((_, i) => i !== index);
+        errorMessages = errorMessages.filter((_, i) => i !== index);
     }
 </script>
 
@@ -184,22 +194,24 @@
     <div class="content-wrapper">
         <h2 class="title">EPUB COMPRESSOR</h2>
 
-        <label
-            for="fileInput"
-            class="drop-zone"
-            on:drop|preventDefault={handleDrop}
-            on:dragover|preventDefault
-        >
-            {#if !epubFile}
+        <label for="fileInput" class="drop-zone" on:dragover|preventDefault>
+            {#if epubFiles.length === 0}
                 <div class="drop-icon">📚</div>
-                <p>DRAG & DROP EPUB FILE HERE<br />OR CLICK TO SELECT</p>
+                <p>DRAG & DROP EPUB FILES HERE<br />OR CLICK TO SELECT</p>
             {:else}
-                <p class="filename">{epubFile.name}</p>
+                <div class="file-list">
+                    {#each epubFiles as file, i}
+                        <div class="file-item">
+                            <span>{file.name}</span>
+                        </div>
+                    {/each}
+                </div>
             {/if}
             <input
                 id="fileInput"
                 type="file"
                 accept=".epub"
+                multiple
                 on:change={handleFileSelected}
                 class="hidden-input"
             />
@@ -223,8 +235,8 @@
                 </p>
             {:else}
                 <p>
-                    Your browser does not support WebP encoding ✗<br />Falling back to
-                    JPEG.
+                    Your browser does not support WebP encoding ✗<br />Falling
+                    back to JPEG.
                 </p>
             {/if}
         </div>
@@ -233,60 +245,63 @@
             <button
                 class="compress-btn"
                 on:click={handleCompress}
-                disabled={isProcessing}
+                disabled={isProcessing || epubFiles.length === 0}
             >
-                {isProcessing ? "PROCESSING..." : "COMPRESS"}
+                {isProcessing
+                    ? "PROCESSING..."
+                    : epubFiles.length > 1
+                      ? "COMPRESS ALL"
+                      : "COMPRESS"}
             </button>
             <button
                 class="download-btn"
                 on:click={handleDownload}
-                disabled={!compressedBlob}
+                disabled={compressedBlobs.every((blob) => !blob)}
             >
-                DOWNLOAD
+                {epubFiles.length > 1 ? "DOWNLOAD ALL" : "DOWNLOAD"}
             </button>
         </div>
 
-        {#if compressedBlob}
-            <div class="file-size-comparison">
-                <h3 class="comparison-title">FILE SIZE COMPARISON</h3>
-                <div class="size-details">
-                    <div class="size-item">
-                        <span class="size-label">ORIGINAL:</span>
-                        <span class="size-value"
-                            >{(originalSize / 1024 / 1024).toFixed(2)} MB</span
-                        >
+        {#each epubFiles as file, i}
+            <div class="file-compression-status">
+                <h3>{file.name}</h3>
+                {#if compressedBlobs[i]}
+                    <div class="file-size-comparison">
+                        <div class="size-details">
+                            <div class="size-item">
+                                <span class="size-label">ORIGINAL:</span>
+                                <span class="size-value">
+                                    {(originalSizes[i] / 1024 / 1024).toFixed(
+                                        2,
+                                    )} MB
+                                </span>
+                            </div>
+                            <div class="size-item">
+                                <span class="size-label">COMPRESSED:</span>
+                                <span class="size-value">
+                                    {(compressedSizes[i] / 1024 / 1024).toFixed(
+                                        2,
+                                    )} MB
+                                </span>
+                            </div>
+                            <div class="size-item highlight">
+                                <span class="size-label">SAVED:</span>
+                                <span class="size-value">
+                                    {(sizeDifferences[i] / 1024 / 1024).toFixed(
+                                        2,
+                                    )} MB ({compressionRatios[i]}%)
+                                </span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="size-item">
-                        <span class="size-label">COMPRESSED:</span>
-                        <span class="size-value"
-                            >{(compressedSize / 1024 / 1024).toFixed(2)} MB</span
-                        >
-                    </div>
-                    <div class="size-item highlight">
-                        <span class="size-label">SAVED:</span>
-                        <span class="size-value"
-                            >{(sizeDifference / 1024 / 1024).toFixed(2)} MB ({compressionRatio}%)</span
-                        >
-                    </div>
-                </div>
-                <div class="progress-container">
-                    <div class="progress-bar">
-                        <div
-                            class="progress"
-                            style="width: {compressionRatio}%"
-                        ></div>
-                    </div>
-                    <div class="progress-labels">
-                        <span>0%</span>
-                        <span>50%</span>
-                        <span>100%</span>
-                    </div>
-                </div>
+                {/if}
+                {#if processingStates[i]}
+                    <div class="processing">Processing...</div>
+                {/if}
+                {#if errorMessages[i]}
+                    <div class="error">{errorMessages[i]}</div>
+                {/if}
             </div>
-        {/if}
-
-        {#if errorMessage}
-            <div class="error">{errorMessage}</div>
-        {/if}
+        {/each}
     </div>
 </div>
