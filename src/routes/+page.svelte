@@ -303,5 +303,7 @@
                 {/if}
             </div>
         {/each}
+        <a href="https://epub-compress.streamlit.app/" style="font-size: small;">Another EPUB Compressor</a>
     </div>
 </div>
+
