@@ -126,7 +126,12 @@ export async function compressEpub(
         } else {
             const fileData = await file.async("arraybuffer");
             const processedData = await processFile(filename, fileData, quality, imgFormat);
-            newZip.file(filename, processedData);
+            newZip.file(filename, processedData, {
+                compression: "DEFLATE",
+                compressionOptions: {
+                    level: 9
+                }
+            });
         }
     });
 
