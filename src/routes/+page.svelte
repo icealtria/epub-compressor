@@ -138,6 +138,13 @@
                             file,
                             quality,
                             imageFormat,
+                            (progress) => {
+                                // Update progress
+                                const progressElement = document.getElementById(`progress-${index}`);
+                                if (progressElement) {
+                                    progressElement.style.width = `${progress}%`;
+                                }
+                            }
                         );
                         compressedBlobs[index] = compressed;
                         compressedSizes[index] = compressed.size;

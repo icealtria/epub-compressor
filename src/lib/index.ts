@@ -103,38 +103,127 @@ async function processFile(
 }
 
 /**
- * Compresses an EPUB file by processing its images.
+ * Compresses an EPUB file by processing its images using multiple workers for parallel processing.
  * @param epubBlob - The EPUB file as a Blob.
  * @param quality - The quality for image conversion (0-100).
- * @param imgFormat - The target image format ("image/webp" or "image/avif").
+ * @param imgFormat - The target image format ("image/webp" or "image/jpeg").
  * @returns A Promise that resolves to a new EPUB Blob.
  */
 export async function compressEpub(
     epubBlob: Blob,
     quality: number,
-    imgFormat: "image/webp" | "image/jpeg"
+    imgFormat: "image/webp" | "image/jpeg",
+    onProgress?: (progress: number) => void
 ): Promise<Blob> {
-    const jszip = new JSZip();
-    const loadedZip = await jszip.loadAsync(epubBlob);
-    const newZip = new JSZip();
-
-    const fileNames = Object.keys(loadedZip.files);
-    const promises = fileNames.map(async (filename) => {
-        const file = loadedZip.files[filename];
-        if (file.dir) {
-            newZip.folder(filename);
-        } else {
-            const fileData = await file.async("arraybuffer");
-            const processedData = await processFile(filename, fileData, quality, imgFormat);
-            newZip.file(filename, processedData, {
-                compression: "DEFLATE",
-                compressionOptions: {
-                    level: 9
-                }
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Determine the number of workers based on available CPU cores
+            // Default to 4 if navigator.hardwareConcurrency is not available
+            const numWorkers = Math.max(2, Math.min(navigator.hardwareConcurrency || 4, 8));
+            
+            // First, extract the EPUB data to prepare for distribution to workers
+            const arrayBuffer = await epubBlob.arrayBuffer();
+            const jszip = new JSZip();
+            const loadedZip = await jszip.loadAsync(arrayBuffer.slice(0));
+            
+            // Get all file names from the EPUB
+            const fileNames = Object.keys(loadedZip.files);
+            const totalFiles = fileNames.length;
+            
+            // Prepare batches for workers
+            const batchSize = Math.ceil(fileNames.length / numWorkers);
+            const batches: string[][] = [];
+            
+            for (let i = 0; i < fileNames.length; i += batchSize) {
+                batches.push(fileNames.slice(i, i + batchSize));
+            }
+            
+            // Create a new zip to store the final result
+            const newZip = new JSZip();
+            
+            // Track progress across all workers
+            let totalProcessed = 0;
+            const updateProgress = () => {
+                totalProcessed++;
+                const progress = (totalProcessed / totalFiles) * 100;
+                onProgress?.(progress);
+            };
+            
+            // Create and start workers
+            const workers: Worker[] = [];
+            const workerPromises = batches.map((batch, workerIndex) => {
+                return new Promise(async (resolveWorker, rejectWorker) => {
+                    const worker = new Worker(new URL('./compressWorker.ts', import.meta.url), {
+                        type: 'module'
+                    });
+                    workers.push(worker);
+                    
+                    // Extract files for this batch
+                    const batchData: Record<string, ArrayBuffer> = {};
+                    for (const filename of batch) {
+                        const file = loadedZip.files[filename];
+                        if (!file.dir) {
+                            batchData[filename] = await file.async("arraybuffer");
+                        }
+                    }
+                    
+                    worker.onmessage = (e) => {
+                        const { type, filename, processedData, progress, error } = e.data;
+                        
+                        switch (type) {
+                            case 'file_processed':
+                                // Add the processed file to the new zip
+                                newZip.file(filename, processedData, {
+                                    compression: "DEFLATE",
+                                    compressionOptions: {
+                                        level: 9
+                                    }
+                                });
+                                updateProgress();
+                                break;
+                            case 'batch_complete':
+                                worker.terminate();
+                                resolveWorker(null);
+                                break;
+                            case 'error':
+                                worker.terminate();
+                                rejectWorker(new Error(error));
+                                break;
+                        }
+                    };
+                    
+                    worker.onerror = (error) => {
+                        worker.terminate();
+                        rejectWorker(error);
+                    };
+                    
+                    // Send the batch data to the worker
+                    worker.postMessage({
+                        batchMode: true,
+                        batchData,
+                        quality,
+                        imgFormat
+                    });
+                });
             });
+            
+            // Add directories to the new zip
+            for (const filename of fileNames) {
+                const file = loadedZip.files[filename];
+                if (file.dir) {
+                    newZip.folder(filename);
+                }
+            }
+            
+            // Wait for all workers to complete
+            await Promise.all(workerPromises);
+            
+            // Generate the final compressed EPUB
+            const compressedBlob = await newZip.generateAsync({ type: "blob" });
+            resolve(compressedBlob);
+            
+        } catch (error) {
+            reject(error);
         }
     });
-
-    await Promise.all(promises);
-    return await newZip.generateAsync({ type: "blob" });
 }
