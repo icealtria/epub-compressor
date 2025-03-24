@@ -102,6 +102,9 @@ async function processFile(
     return fileData;
 }
 
+import { logger } from "./logger";
+import { WorkerError, handleError } from "./errors";
+
 /**
  * Compresses an EPUB file by processing its images using multiple workers for parallel processing.
  * @param epubBlob - The EPUB file as a Blob.
@@ -115,115 +118,145 @@ export async function compressEpub(
     imgFormat: "image/webp" | "image/jpeg",
     onProgress?: (progress: number) => void
 ): Promise<Blob> {
+    logger.info('Starting EPUB compression', { quality, imgFormat });
+
     return new Promise(async (resolve, reject) => {
+        const workers: Worker[] = [];
+
         try {
-            // Determine the number of workers based on available CPU cores
-            // Default to 4 if navigator.hardwareConcurrency is not available
+            // Determine optimal number of workers
             const numWorkers = Math.max(2, Math.min(navigator.hardwareConcurrency || 4, 8));
-            
-            // First, extract the EPUB data to prepare for distribution to workers
+            logger.debug('Initializing workers', { numWorkers });
+
+            // Extract EPUB data
             const arrayBuffer = await epubBlob.arrayBuffer();
             const jszip = new JSZip();
             const loadedZip = await jszip.loadAsync(arrayBuffer.slice(0));
-            
-            // Get all file names from the EPUB
+
             const fileNames = Object.keys(loadedZip.files);
             const totalFiles = fileNames.length;
-            
-            // Prepare batches for workers
+            logger.info('EPUB file loaded', { totalFiles });
+
+            // Prepare worker batches
             const batchSize = Math.ceil(fileNames.length / numWorkers);
             const batches: string[][] = [];
-            
             for (let i = 0; i < fileNames.length; i += batchSize) {
                 batches.push(fileNames.slice(i, i + batchSize));
             }
-            
-            // Create a new zip to store the final result
+
             const newZip = new JSZip();
-            
-            // Track progress across all workers
             let totalProcessed = 0;
+            let totalFailed = 0;
+
             const updateProgress = () => {
                 totalProcessed++;
                 const progress = (totalProcessed / totalFiles) * 100;
                 onProgress?.(progress);
+                logger.debug('Processing progress', { totalProcessed, totalFiles, progress });
             };
-            
-            // Create and start workers
-            const workers: Worker[] = [];
-            const workerPromises = batches.map((batch, workerIndex) => {
+
+            // Process batches with workers
+            const workerPromises = batches.map(async (batch, workerIndex) => {
                 return new Promise(async (resolveWorker, rejectWorker) => {
-                    const worker = new Worker(new URL('./compressWorker.ts', import.meta.url), {
-                        type: 'module'
-                    });
-                    workers.push(worker);
-                    
-                    // Extract files for this batch
-                    const batchData: Record<string, ArrayBuffer> = {};
-                    for (const filename of batch) {
-                        const file = loadedZip.files[filename];
-                        if (!file.dir) {
-                            batchData[filename] = await file.async("arraybuffer");
+                    try {
+                        const worker = new Worker(new URL('./compressWorker.ts', import.meta.url), {
+                            type: 'module'
+                        });
+                        workers.push(worker);
+
+                        // Prepare batch data
+                        const batchData: Record<string, ArrayBuffer> = {};
+                        for (const filename of batch) {
+                            const file = loadedZip.files[filename];
+                            if (!file.dir) {
+                                batchData[filename] = await file.async("arraybuffer");
+                            }
                         }
+
+                        worker.onmessage = (e) => {
+                            const { type, filename, processedData, error, summary } = e.data;
+
+                            switch (type) {
+                                case 'file_processed':
+                                    newZip.file(filename, processedData, {
+                                        compression: "DEFLATE",
+                                        compressionOptions: { level: 9 }
+                                    });
+                                    updateProgress();
+                                    break;
+
+                                case 'file_error':
+                                    totalFailed++;
+                                    logger.error(`Worker ${workerIndex} failed to process file`, {
+                                        filename,
+                                        error
+                                    });
+                                    updateProgress(); // Still update progress even for failed files
+                                    break;
+
+                                case 'batch_complete':
+                                    logger.info(`Worker ${workerIndex} completed batch`, summary);
+                                    worker.terminate();
+                                    resolveWorker(null);
+                                    break;
+
+                                case 'error':
+                                    throw new WorkerError(error, workerIndex);
+                            }
+                        };
+
+                        worker.onerror = (error) => {
+                            const workerError = new WorkerError(
+                                `Worker ${workerIndex} encountered an error: ${error.message}`,
+                                workerIndex
+                            );
+                            logger.error('Worker error', { error: workerError, workerIndex });
+                            worker.terminate();
+                            rejectWorker(workerError);
+                        };
+
+                        // Start processing
+                        worker.postMessage({
+                            batchMode: true,
+                            batchData,
+                            quality,
+                            imgFormat
+                        }, Object.values(batchData).map(buffer => buffer.slice(0)));
+
+                    } catch (error) {
+                        const workerError = handleError(error);
+                        logger.error(`Error in worker ${workerIndex}`, { error: workerError });
+                        rejectWorker(workerError);
                     }
-                    
-                    worker.onmessage = (e) => {
-                        const { type, filename, processedData, progress, error } = e.data;
-                        
-                        switch (type) {
-                            case 'file_processed':
-                                // Add the processed file to the new zip
-                                newZip.file(filename, processedData, {
-                                    compression: "DEFLATE",
-                                    compressionOptions: {
-                                        level: 9
-                                    }
-                                });
-                                updateProgress();
-                                break;
-                            case 'batch_complete':
-                                worker.terminate();
-                                resolveWorker(null);
-                                break;
-                            case 'error':
-                                worker.terminate();
-                                rejectWorker(new Error(error));
-                                break;
-                        }
-                    };
-                    
-                    worker.onerror = (error) => {
-                        worker.terminate();
-                        rejectWorker(error);
-                    };
-                    
-                    // Send the batch data to the worker
-                    worker.postMessage({
-                        batchMode: true,
-                        batchData,
-                        quality,
-                        imgFormat
-                    });
                 });
             });
-            
-            // Add directories to the new zip
-            for (const filename of fileNames) {
-                const file = loadedZip.files[filename];
-                if (file.dir) {
-                    newZip.folder(filename);
-                }
-            }
-            
-            // Wait for all workers to complete
+
+            // Wait for all workers
             await Promise.all(workerPromises);
-            
-            // Generate the final compressed EPUB
+
+            logger.info('All workers completed', {
+                totalProcessed,
+                totalFailed,
+                totalFiles
+            });
+
+            // Generate final EPUB
             const compressedBlob = await newZip.generateAsync({ type: "blob" });
+            logger.info('EPUB compression completed', {
+                originalSize: epubBlob.size,
+                compressedSize: compressedBlob.size
+            });
+
             resolve(compressedBlob);
-            
+
         } catch (error) {
-            reject(error);
+            const compressionError = handleError(error);
+            logger.error('EPUB compression failed', { error: compressionError });
+
+            // Clean up workers
+            workers.forEach(worker => worker.terminate());
+
+            reject(compressionError);
         }
     });
 }

@@ -1,6 +1,12 @@
 <script lang="ts">
     import { compressEpub } from "$lib";
     import { onMount } from "svelte";
+    import {
+        formatFileSize,
+        validateEpubFile,
+        checkWebPSupport,
+        downloadBlob,
+    } from "$lib/utils";
     import "./styles.css";
 
     let epubFiles: File[] = [];
@@ -17,15 +23,6 @@
 
     let isProcessing = false;
     let isDragging = false;
-
-    function checkWebPSupport(): boolean {
-        const canvas = document.createElement("canvas");
-        if (canvas.getContext && canvas.getContext("2d")) {
-            const data = canvas.toDataURL("image/webp");
-            return data.indexOf("data:image/webp") === 0;
-        }
-        return false;
-    }
 
     onMount(() => {
         supportsWebP = checkWebPSupport();
@@ -52,26 +49,12 @@
         };
     });
 
-    function validateEpubFile(file: File): boolean {
-        // Check file extension
-        const fileExtension = file.name.split(".").pop()?.toLowerCase();
-        if (fileExtension !== "epub") {
-            errorMessages.push("Only EPUB files are supported.");
+    function handleFileValidation(file: File): boolean {
+        const validationResult = validateEpubFile(file);
+        if (!validationResult.isValid && validationResult.error) {
+            errorMessages.push(validationResult.error);
             return false;
         }
-
-        // Check MIME type
-        const validMimeTypes = [
-            "application/epub+zip",
-            "application/octet-stream",
-        ];
-        if (!validMimeTypes.includes(file.type) && file.type !== "") {
-            errorMessages.push(
-                `Invalid file type: ${file.type}. Only EPUB files are supported.`,
-            );
-            return false;
-        }
-
         return true;
     }
 
@@ -79,7 +62,7 @@
         const input = event.target as HTMLInputElement;
         if (input.files && input.files.length > 0) {
             const files = Array.from(input.files);
-            const validFiles = files.filter(validateEpubFile);
+            const validFiles = files.filter(handleFileValidation);
             addFiles(validFiles);
         }
     }
@@ -140,11 +123,13 @@
                             imageFormat,
                             (progress) => {
                                 // Update progress
-                                const progressElement = document.getElementById(`progress-${index}`);
+                                const progressElement = document.getElementById(
+                                    `progress-${index}`,
+                                );
                                 if (progressElement) {
                                     progressElement.style.width = `${progress}%`;
                                 }
-                            }
+                            },
                         );
                         compressedBlobs[index] = compressed;
                         compressedSizes[index] = compressed.size;
@@ -173,14 +158,9 @@
         epubFiles.forEach((file, index) => {
             const blob = compressedBlobs[index];
             if (!blob) return;
-
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download =
+            const filename =
                 file.name.replace(/\.epub$/i, "") + "-compressed.epub";
-            link.click();
-            URL.revokeObjectURL(url);
+            downloadBlob(blob, filename);
         });
     }
 
@@ -278,25 +258,21 @@
                             <div class="size-item">
                                 <span class="size-label">ORIGINAL:</span>
                                 <span class="size-value">
-                                    {(originalSizes[i] / 1024 / 1024).toFixed(
-                                        2,
-                                    )} MB
+                                    {formatFileSize(originalSizes[i])}
                                 </span>
                             </div>
                             <div class="size-item">
                                 <span class="size-label">COMPRESSED:</span>
                                 <span class="size-value">
-                                    {(compressedSizes[i] / 1024 / 1024).toFixed(
-                                        2,
-                                    )} MB
+                                    {formatFileSize(compressedSizes[i])}
                                 </span>
                             </div>
                             <div class="size-item highlight">
                                 <span class="size-label">SAVED:</span>
                                 <span class="size-value">
-                                    {(sizeDifferences[i] / 1024 / 1024).toFixed(
-                                        2,
-                                    )} MB ({compressionRatios[i]}%)
+                                    {formatFileSize(sizeDifferences[i])} ({compressionRatios[
+                                        i
+                                    ]}%)
                                 </span>
                             </div>
                         </div>
@@ -310,7 +286,8 @@
                 {/if}
             </div>
         {/each}
-        <a href="https://epub-compress.streamlit.app/" style="font-size: small;">Another EPUB Compressor</a>
+        <a href="https://epub-compress.streamlit.app/" style="font-size: small;"
+            >Another EPUB Compressor</a
+        >
     </div>
 </div>
-

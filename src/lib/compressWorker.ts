@@ -1,10 +1,12 @@
 import JSZip from "jszip";
+import { logger } from "./logger";
+import { ImageConversionError, WorkerError, handleError } from "./errors";
 
 /**
  * Converts an image (provided as an ArrayBuffer) to the specified format using a canvas.
  * @param imageArrayBuffer - The original image data.
  * @param quality - An integer between 0 and 100.
- * @param imgFormat - Either "image/webp" or "image/avif".
+ * @param imgFormat - Either "image/webp" or "image/jpeg".
  * @returns A Promise that resolves to an ArrayBuffer of the converted image.
  */
 async function convertImage(
@@ -12,18 +14,19 @@ async function convertImage(
     quality: number,
     imgFormat: "image/webp" | "image/jpeg"
 ): Promise<ArrayBuffer> {
-    // Keep track of the original file size
+    logger.debug('Starting image conversion', { quality, format: imgFormat });
     const originalBlob = new Blob([imageArrayBuffer]);
     const originalSize = originalBlob.size;
 
     try {
-        // Convert to WebP
         const imageBitmap = await createImageBitmap(originalBlob);
         const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
         const ctx = canvas.getContext("2d");
+
         if (!ctx) {
-            throw new Error("Failed to get canvas 2D context.");
+            throw new ImageConversionError("Failed to get canvas 2D context.");
         }
+
         ctx.drawImage(imageBitmap, 0, 0);
 
         const convertedArrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -35,24 +38,25 @@ async function convertImage(
                     const buffer = await convertedBlob.arrayBuffer();
                     resolve(buffer);
                 } else {
-                    reject(new Error("Image conversion failed."));
+                    reject(new ImageConversionError("Image conversion failed."));
                 }
-            }).catch(reject);
+            }).catch(error => reject(new ImageConversionError("Image conversion failed.", error)));
         });
 
-        // Compare the size of the converted image with the original
         const convertedBlob = new Blob([convertedArrayBuffer]);
-        if (convertedBlob.size < originalSize) {
-            // Return the smaller (converted) version
-            return convertedArrayBuffer;
-        } else {
-            // Return the original data if that is smaller
-            return imageArrayBuffer;
-        }
+        const compressionResult = convertedBlob.size < originalSize ? convertedArrayBuffer : imageArrayBuffer;
+
+        logger.info('Image conversion completed', {
+            originalSize,
+            convertedSize: convertedBlob.size,
+            usedConverted: convertedBlob.size < originalSize
+        });
+
+        return compressionResult;
     } catch (error) {
-        console.error("Error converting image:", error);
-        // Fallback: return original image data if conversion fails
-        return imageArrayBuffer;
+        const convertError = handleError(error);
+        logger.error('Image conversion failed', { error: convertError });
+        throw convertError;
     }
 }
 
@@ -102,42 +106,62 @@ async function processFile(
 // Worker message handler
 self.onmessage = async (e: MessageEvent) => {
     const { epubData, quality, imgFormat, batchMode, batchData } = e.data;
+    logger.info('Worker received message', { batchMode, quality, imgFormat });
 
     try {
         // Handle batch mode (for parallel processing)
         if (batchMode && batchData) {
-            // Process each file in the batch and send back individually
             const filenames = Object.keys(batchData);
             const totalFiles = filenames.length;
             let processedFiles = 0;
-            
+            let failedFiles = 0;
+
+            logger.debug('Starting batch processing', { totalFiles });
+
             // Process files in parallel using Promise.all
             const processingPromises = filenames.map(async (filename) => {
                 try {
                     const fileData = batchData[filename];
                     const processedData = await processFile(filename, fileData, quality, imgFormat);
-                    
+
                     // Send the processed file back to the main thread
                     self.postMessage({
                         type: "file_processed",
                         filename,
                         processedData
                     }, { transfer: [processedData] });
-                    
+
                     processedFiles++;
                     self.postMessage({
                         type: "progress",
-                        progress: (processedFiles / totalFiles) * 100
+                        progress: (processedFiles / totalFiles) * 100,
+                        processedFiles,
+                        totalFiles,
+                        failedFiles
                     });
-                } catch (fileError) {
-                    console.error(`Error processing file ${filename}:`, fileError);
-                    // Continue with other files even if one fails
+                } catch (error) {
+                    failedFiles++;
+                    const processError = handleError(error);
+                    logger.error(`Error processing file ${filename}`, { error: processError });
+                    self.postMessage({
+                        type: "file_error",
+                        filename,
+                        error: processError.message
+                    });
                 }
             });
-            
+
             await Promise.all(processingPromises);
-            self.postMessage({ type: "batch_complete" });
-        } 
+            logger.info('Batch processing completed', { processedFiles, failedFiles, totalFiles });
+            self.postMessage({
+                type: "batch_complete",
+                summary: {
+                    totalFiles,
+                    processedFiles,
+                    failedFiles
+                }
+            });
+        }
         // Handle original mode (single worker processing entire EPUB)
         else if (epubData) {
             const jszip = new JSZip();
@@ -151,11 +175,11 @@ self.onmessage = async (e: MessageEvent) => {
             // Process files in chunks to avoid memory issues
             const CHUNK_SIZE = 10; // Process 10 files at a time
             const chunks = [];
-            
+
             for (let i = 0; i < fileNames.length; i += CHUNK_SIZE) {
                 chunks.push(fileNames.slice(i, i + CHUNK_SIZE));
             }
-            
+
             for (const chunk of chunks) {
                 await Promise.all(chunk.map(async (filename) => {
                     const file = loadedZip.files[filename];
