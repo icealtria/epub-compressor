@@ -286,8 +286,18 @@
                 {/if}
             </div>
         {/each}
-        <a href="https://epub-compress.streamlit.app/" style="font-size: small;"
-            >Another EPUB Compressor</a
-        >
+        <footer>
+            <a href="https://epub-compress.streamlit.app/" target="_blank"
+                >Another EPUB Compressor</a
+            >
+            <a
+                href="https://github.com/icealtria/epub-compressor"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub Repository"
+            >
+                GitHub
+            </a>
+        </footer>
     </div>
 </div>
